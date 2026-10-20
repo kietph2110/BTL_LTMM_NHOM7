@@ -2,6 +2,17 @@
 
 **Đề tài:** Cài đặt và mô phỏng thuật toán mã dòng MICKEY 2.0 (Mutual Irregular Clocking KEYstream generator).
 
+## Thành viên nhóm
+
+| STT | MSSV | Họ và tên |
+| :---: | :---: | :--- |
+| 1 | 20233483 | **Phạm Nguyễn Anh Kiệt** (Nhóm trưởng) |
+| 2 | 20233373 | Nguyễn Khắc Giang |
+| 3 | 20233308 | Nguyễn Văn Đạt |
+| 4 | 20233473 | Đặng Trung Kiên |
+| 5 | 20233468 | Hoàng Tuấn Khôi |
+| 6 | 20233451 | Nguyễn Quang Huy |
+
 ## Giới thiệu thuật toán
 MICKEY 2.0 là một thuật toán mã hóa luồng (stream cipher) được thiết kế bởi Steve Babbage và Matthew Dodd, thuộc dự án eSTREAM. Thuật toán được tối ưu hóa đặc biệt cho các thiết bị phần cứng có tài nguyên hạn chế.
 
