@@ -13,7 +13,7 @@
    git pull
    git checkout -b feature/<tên-việc>
    ```
-4. **Vòng đời nhánh ngắn:** Làm xong tính năng -> Mở PR -> Được duyệt -> Merge -> **Xóa nhánh ngay lập tức**.
+4. **Vòng đời nhánh ngắn:** Làm xong tính năng -> Mở PR -> Được duyệt -> Merge. Nhánh đã merge giữ lại, không cần xóa.
 
 ## Quy tắc Commit
 
