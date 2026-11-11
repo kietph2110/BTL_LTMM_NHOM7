@@ -1,13 +1,38 @@
+from typing import NamedTuple
+
 from .constants import validate
 from .registers import clock_r, clock_s
 
 
-def clock_kg(R, S, mixing, inp):
-    """Một nhịp chung của bộ sinh khóa."""
+class KGStep(NamedTuple):
+    """Kết quả một nhịp CLOCK_KG, kèm các bit trung gian để trace."""
+    R: list
+    S: list
+    ctrl_r: int   # CONTROL_BIT_R = s34 ^ r67
+    ctrl_s: int   # CONTROL_BIT_S = s67 ^ r33
+    fb_r: int     # FEEDBACK_BIT của R = r99 ^ INPUT_BIT_R
+    fb_s: int     # FEEDBACK_BIT của S = s99 ^ INPUT_BIT_S
+
+
+def clock_kg_step(R, S, mixing, inp) -> KGStep:
+    """Một nhịp CLOCK_KG, trả thêm ctrl_r, ctrl_s và feedback của hai thanh ghi."""
     ctrl_r = S[34] ^ R[67]
     ctrl_s = S[67] ^ R[33]
     inp_r = inp ^ S[50] if mixing else inp
-    return clock_r(R, inp_r, ctrl_r), clock_s(S, inp, ctrl_s)
+    return KGStep(
+        clock_r(R, inp_r, ctrl_r),
+        clock_s(S, inp, ctrl_s),
+        ctrl_r,
+        ctrl_s,
+        R[99] ^ inp_r,
+        S[99] ^ inp,
+    )
+
+
+def clock_kg(R, S, mixing, inp):
+    """Một nhịp chung của bộ sinh khóa, chỉ trả (R, S)."""
+    step = clock_kg_step(R, S, mixing, inp)
+    return step.R, step.S
 
 
 def bytes_to_bits(data: bytes, nbits: int):
