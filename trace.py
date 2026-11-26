@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -78,6 +79,8 @@ class TraceEvent:
     s_after: Optional[str | list[int]] = None
 
     keystream_bit: Optional[int] = None
+    run_id: Optional[int] = None
+    note: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -175,7 +178,7 @@ class TraceRecorder:
             s_after=s_after,
             keystream_bit=keystream_bit,
         )
-        self._events.append(event)
+        self._events.append(deepcopy(event))
         return event
 
     def trace_execution(
@@ -194,115 +197,72 @@ class TraceRecorder:
             raise ValueError(f"Khóa phải dài 80 bit (10 byte), nhận {len(key)} byte.")
         if iv_bits is None:
             iv_bits = len(iv) * 8
+        if isinstance(iv_bits, bool) or not isinstance(iv_bits, int):
+            raise TypeError("iv_bits phải là số nguyên.")
         if not (0 <= iv_bits <= 80 and iv_bits <= len(iv) * 8):
             raise ValueError(f"iv_bits không hợp lệ: {iv_bits}.")
 
+        run = TraceRecorder(strict_register_length=self.strict_register_length)
         R = [0] * REGISTER_BITS
         S = [0] * REGISTER_BITS
 
-        def record_step(
-            *,
-            phase: str,
-            operation: str,
-            bit_input: Optional[int],
-            bit_mixing: Optional[bool],
-            r_before: Sequence[int],
-            s_before: Sequence[int],
-            r_after: Sequence[int],
-            s_after: Sequence[int],
+        def clock_step(
+            phase: str, input_bit: int, mixing: bool,
             keystream_bit: Optional[int] = None,
         ) -> None:
-            ctrl_r = S[34] ^ R[67]
-            ctrl_s = S[67] ^ R[33]
-            self.record_clock_step(
+            nonlocal R, S
+            control_bit_r = S[34] ^ R[67]
+            control_bit_s = S[67] ^ R[33]
+            next_r, next_s = clock_kg(R, S, mixing, input_bit)
+            run.record_clock_step(
                 phase=phase,
-                operation=operation,
-                input_bit=bit_input,
-                mixing=bit_mixing,
-                control_bit_r=ctrl_r,
-                control_bit_s=ctrl_s,
-                r_before=list(r_before),
-                s_before=list(s_before),
-                r_after=list(r_after),
-                s_after=list(s_after),
+                operation="clock_kg",
+                input_bit=input_bit,
+                mixing=mixing,
+                control_bit_r=control_bit_r,
+                control_bit_s=control_bit_s,
+                r_before=R,
+                s_before=S,
+                r_after=next_r,
+                s_after=next_s,
                 keystream_bit=keystream_bit,
             )
+            R, S = next_r, next_s
 
         for bit in bytes_to_bits(iv, iv_bits):
-            r_before = list(R)
-            s_before = list(S)
-            R, S = clock_kg(R, S, True, bit)
-            record_step(
-                phase="init_iv",
-                operation="clock_kg",
-                bit_input=bit,
-                bit_mixing=True,
-                r_before=r_before,
-                s_before=s_before,
-                r_after=R,
-                s_after=S,
-            )
+            clock_step("init_iv", bit, mixing=True)
 
         for bit in bytes_to_bits(key, 80):
-            r_before = list(R)
-            s_before = list(S)
-            R, S = clock_kg(R, S, True, bit)
-            record_step(
-                phase="init_key",
-                operation="clock_kg",
-                bit_input=bit,
-                bit_mixing=True,
-                r_before=r_before,
-                s_before=s_before,
-                r_after=R,
-                s_after=S,
-            )
+            clock_step("init_key", bit, mixing=True)
 
         for _ in range(100):
-            r_before = list(R)
-            s_before = list(S)
-            R, S = clock_kg(R, S, True, 0)
-            record_step(
-                phase="preclock",
-                operation="clock_kg",
-                bit_input=0,
-                bit_mixing=True,
-                r_before=r_before,
-                s_before=s_before,
-                r_after=R,
-                s_after=S,
-            )
+            clock_step("preclock", 0, mixing=True)
 
         ciphertext = bytearray()
         for byte_index in range(len(data)):
             byte = 0
-            for bit_index in range(8):
-                r_before = list(R)
-                s_before = list(S)
+            for _ in range(8):
                 ks_bit = (R[0] ^ S[0]) & 1
-                R, S = clock_kg(R, S, False, 0)
-                record_step(
-                    phase="keystream",
-                    operation="clock_kg",
-                    bit_input=0,
-                    bit_mixing=False,
-                    r_before=r_before,
-                    s_before=s_before,
-                    r_after=R,
-                    s_after=S,
-                    keystream_bit=ks_bit,
-                )
+                clock_step("keystream", 0, mixing=False, keystream_bit=ks_bit)
                 byte = (byte << 1) | ks_bit
             ciphertext_byte = byte ^ data[byte_index]
             ciphertext.append(ciphertext_byte)
-            self.record(
+            run.record(
                 phase="encrypt",
                 operation="xor_byte",
             )
 
+        # sequence đầu tiên của lần chạy cũng là mã nhận diện trong toàn bộ trace.
+        run_id = len(self._events)
+        for event in run._events:
+            event.sequence += run_id
+            event.run_id = run_id
+        run._events[0].note = note
+        self._events.extend(run._events)
         return {
             "ciphertext": bytes(ciphertext),
-            "event_count": len(self._events),
+            "run_id": run_id,
+            "event_count": len(run._events),
             "key_bits": 80,
             "iv_bits": iv_bits,
         }
@@ -328,6 +288,10 @@ class TraceRecorder:
                 "r_after": event.r_after,
                 "s_after": event.s_after,
             }
+            if event.run_id is not None:
+                row["run_id"] = event.run_id
+            if event.note is not None:
+                row["note"] = event.note
             rows.append(row)
 
         output_path.write_text(
@@ -339,11 +303,11 @@ class TraceRecorder:
 
 def run_demo() -> None:
     """Chạy demo trace cho toàn bộ quá trình."""
-    trace = TraceRecorder(strict_register_length=False)
+    trace = TraceRecorder()
     key = bytes.fromhex("00112233445566778899")
     iv = bytes.fromhex("11223344556677889900")
     data = b"HELLO"
-    output_path = Path(__file__).resolve().parent.parent / "trace_demo.json"
+    output_path = Path(__file__).resolve().with_name("trace_demo.json")
 
     result = trace.trace_execution(key=key, iv=iv, data=data)
     trace.export_json(output_path)
